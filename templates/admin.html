@@ -1,0 +1,29 @@
+{% extends "frame.html" %}
+{% block title %}S3 Meter Admin{% endblock %}
+{% block page_content %}
+<div class="container">
+<h1>Buckets</h1>
+  {% for bucket in sorted(get_allowed_buckets()) %}
+  <div class="col-xs-3 col-sm-3">
+    <form class="form-inline" action="{{ url_for('post_admin') }}" method="POST">
+      <a href="{{ url_for('get_bucket', bucket=bucket) }}">{{ bucket|e }}</a>
+      {{ xsrf() }}
+      <input type="hidden" name="action" value="remove-bucket">
+      <input type="hidden" name="bucket-name" value="{{ bucket|e }}">
+      <span class="sr-only"><button type="submit">Remove {{ bucket|e }}</button></span>
+      <div style="float:right"><a href="#" onclick="$(this).closest('form').submit()"><span class="glyphicon glyphicon-remove"></span></a></div>
+    </form>
+  </div>
+  <div class="col-xs-1 col-sm-1">&nbsp;</div>
+  {% endfor %}
+  <div class="col-xs-3 col-sm-12">
+    <h2>Add bucket</h2>
+    <form class="form" action="{{ url_for('post_admin') }}" method="POST">
+      {{ xsrf() }}
+      <input type="hidden" name="action" value="add-bucket">
+      {{ form_input("bucket-name", "S3 Bucket", "", "bucket-name") }}
+    </form>
+    {{ form_submit(label="Add bucket") }}
+  </div>
+</div>
+{% endblock page_content %}

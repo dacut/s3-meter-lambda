@@ -1,15 +1,25 @@
 FROM amazonlinux:latest
 VOLUME ["/export"]
-RUN yum install -y python35-virtualenv zip
+RUN yum install -y binutils gcc python35-virtualenv zip
 RUN mkdir -p /webapp
 RUN virtualenv-3.5 --python=python3 /webapp/venv
-ENV VIRTUAL_ENV=/webapp/venv PATH=/webapp/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-COPY requirements.txt /webapp
+ENV VIRTUAL_ENV=/webapp/venv
+ENV PATH=/webapp/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV LANG=en_US.UTF-8
 WORKDIR /webapp
-RUN pip install -r requirements.txt
+RUN pip install boto3
+RUN pip install redis
+RUN pip install flask
+RUN pip install meterer
+RUN pip install zappa
+RUN rm -rf /webapp/venv/lib/python3.5/site-packages/concurrent
+RUN rm -rf /webapp/venv/lib/python3.5/site-packages/concurrent-*.dist-info
 
 COPY s3meter.py /webapp
-RUN zip /lambda.zip s3meter.py
-WORKDIR /webapp/venv/lib/python3.5/site-packages
-RUN zip -r /lambda.zip . -x "botocore/*" "botocore-*.dist-info/*" "boto3/*" "boto3-*.dist-info/*" "docutils/*" "docutils-*.dist-info/*" "jmespath/*" "pip/*" "pip-*.dist-info/*" "setuptools/*" "setuptools-*.dist-info/*"
+COPY zappa_settings.json /webapp
+COPY static /webapp/static
+COPY templates /webapp/templates
+ENV AWS_ACCESS_KEY_ID=ignored
+ENV AWS_SECRET_ACCESS_KEY=ignored
+RUN zappa package
+RUN mv s3meter-prod-*.zip /lambda.zip

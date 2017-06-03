@@ -1,1 +1,5 @@
+flask
+kappa>=0.7.0
 meterer
+passlib
+zappa
