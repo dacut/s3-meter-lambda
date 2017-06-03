@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from base64 import b64decode, b64encode
+from datetime import datetime, timedelta
 from http import HTTPStatus
+from json import dumps as json_dumps
 import logging
 from os import environ, urandom
 from sys import exit, stderr
@@ -35,8 +37,11 @@ redis_port = int(redis_port)
 redis_pool = ConnectionPool(host=redis_host, port=redis_port)
 redis = StrictRedis(connection_pool=redis_pool)
 
+# The S3 metering client
+s3m = S3Meterer(cache=redis, cloudwatch_namespace="S3Meter")
+
+# Actual S3 client; we use this to sign requests.
 s3 = boto3.client("s3")
-s3m = S3Meterer(cache=redis)
 
 # How long URLs should be valid for.
 expiration_timeout = int(environ.get("EXPIRATION_TIMEOUT", "30"))
@@ -200,7 +205,6 @@ def post_bucket(bucket, code=HTTPStatus.OK):
         flash("Unknown action requested", category="error")
         return get_bucket(bucket, code=HTTPStatus.BAD_REQUEST)
 
-
 @app.route("/<bucket>/<path:key>", methods=["GET", "HEAD"])
 def get_s3_object(bucket, key):
     if bucket not in get_allowed_buckets():
@@ -222,6 +226,7 @@ def get_s3_object(bucket, key):
                 HTTPStatus.SERVICE_UNAVAILABLE,
                 headers(ContentType="application/xml")))
     except BotoClientError as e:
+        raise
         error_code = int(e.response.get("Error").get("Code", "0"))
         if error_code == HTTPStatus.NOT_FOUND:
             return make_response((
@@ -239,6 +244,86 @@ def get_s3_object(bucket, key):
 
     log.info("Redirecting %r to %r",s3_path, url)
     return redirect(url, code=int(HTTPStatus.TEMPORARY_REDIRECT))
+
+@app.route("/metrics")
+def get_metrics():
+    metrics = []
+
+    cursor = 0
+    now = datetime.utcnow()
+
+    current = {}
+    prior = {}
+
+    current["year"] = "%04d" % now.year
+    prior["year"] = "%04d" % (now.year - 1)
+
+    current["month"] = "%04d-%02d" % (now.year, now.month)
+    if now.month > 1:
+        prior["month"] = "%04d-%02d" % (now.year, now.month - 1)
+    else:
+        prior["month"] = "%04d-%02d" % (now.year - 1, 12)
+
+    current["day"] = "%04d-%02d-%02d" % (now.year, now.month, now.day)
+    prior_day = now - timedelta(days=1)
+    prior["day"] = "%04d-%02d-%02d" % (
+        prior_day.year, prior_day.month, prior_day.day)
+
+    current["hour"] = "%04d-%02d-%02dT%02d" % (
+        now.year, now.month, now.day, now.hour)
+    prior_hour = now - timedelta(seconds=3600)
+    prior["hour"] = "%04d-%02d-%02dT%02d" % (
+        prior_hour.year, prior_hour.month, prior_hour.day, prior_hour.hour)
+
+    isonow = now.isocalendar()
+    isoprior = (now - timedelta(days=7)).isocalendar()
+
+    current["week"] = "%04d-W%02d" % (isonow[0], isonow[1])
+    prior["week"] = "%04d-W%02d" % (isoprior[0], isoprior[1])
+
+    for period in ["hour", "day", "week", "month", "year"]:
+        # Scan both attempts and allowances
+        for metric in ["Allowed", "Attempt"]:
+            # Scan both the prior and current period
+            for period_str in [prior[period], current[period]]:
+                cursor = 0
+
+                while True:
+                    results = redis.scan(cursor, match="%s:%s:*" % (
+                        metric.upper(), period_str))
+
+                    cursor = results[0]
+
+                    for key in results[1]:
+                        key = key.decode("utf-8")
+                        bucket = key.split(":", 2)[-1]
+
+                        value = redis.get(key)
+                        if not value:
+                            continue
+
+                        value = int(value)
+
+                        metrics.append({
+                            "MetricName": "%sAccess" % metric,
+                            "Dimensions": [
+                                {"Name": "Bucket", "Value": bucket},
+                                {"Name": "Period", "Value": period.title()},
+                                {"Name": "PeriodStamp", "Value": period_str},
+                            ],
+                            "Value": value,
+                            "Unit": "Bytes",
+                        })
+
+                    if cursor == 0:
+                        break
+
+    cw = boto3.client("cloudwatch")
+    cw.put_metric_data(Namespace="S3Meter", MetricData=metrics)
+
+    return make_response((json_dumps(metrics), HTTPStatus.OK,
+                          headers(ContentType="application/json")))
+
 
 def headers(**kw):
     """
