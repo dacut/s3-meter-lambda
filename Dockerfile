@@ -12,4 +12,4 @@ RUN pip install -r requirements.txt
 COPY s3meter.py /webapp
 RUN zip /lambda.zip s3meter.py
 WORKDIR /webapp/venv/lib/python3.5/site-packages
-RUN zip -r /lambda.zip .
+RUN zip -r /lambda.zip . -x "botocore/*" "botocore-*.dist-info/*" "boto3/*" "boto3-*.dist-info/*" "docutils/*" "docutils-*.dist-info/*" "jmespath/*" "pip/*" "pip-*.dist-info/*" "setuptools/*" "setuptools-*.dist-info/*"
