@@ -1,6 +1,9 @@
 # Ignore docker export directory
 export/
 
+# Ignore my run-local which points to credentials.
+run-local.sh
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
