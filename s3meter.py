@@ -3,7 +3,7 @@ from base64 import b64decode, b64encode
 from http import HTTPStatus
 import logging
 from os import environ, urandom
-from sys import stderr
+from sys import exit, stderr
 
 import boto3
 from botocore.exceptions import ClientError as BotoClientError
@@ -32,6 +32,18 @@ if ":" not in redis_endpoint:
 
 redis_host, redis_port = redis_endpoint.split(":")
 redis_port = int(redis_port)
+
+log.info("Checking Redis endpoint")
+# Attempt to connect to Redis
+try:
+    from socket import create_connection
+    s = create_connection((redis_host, redis_port), 1.0)
+    s.close()
+    del s
+except Exception as e:
+    log.error("Failed to connect to Redis", exc_info=True)
+    raise
+
 redis_pool = ConnectionPool(host=redis_host, port=redis_port)
 redis = StrictRedis(connection_pool=redis_pool)
 
@@ -50,6 +62,7 @@ secret_key = environ.get("SECRET_KEY")
 if secret_key is None:
     app.secret_key = urandom(18)
 else:
+    log.info("Decrypting secret key")
     response = boto3.client("kms").decrypt(
         CiphertextBlob=b64decode(secret_key),
         EncryptionContext={
@@ -86,8 +99,10 @@ def get_root():
 @app.route("/admin")
 def get_admin(code=HTTPStatus.OK):
     if "username" not in session:
+        log.info("username not in session; sending to login.")
         return make_response((render_template("login.html"), code, headers()))
     else:
+        log.info("username in session; sending to admin.")
         return make_response((render_template("admin.html"), code, headers()))
 
 @app.route("/admin", methods=["POST"])
@@ -232,9 +247,9 @@ def get_s3_object(bucket, key):
 
     url = s3.generate_presigned_url(
         "get_object", Params={"Bucket": bucket, "Key": key},
-        ExpiresIn=expiration_timeout, HttpMethod=http_method)
+        ExpiresIn=expiration_timeout, HttpMethod=request.method)
 
-    log.info("Redirecting %r to %r", path, url)
+    log.info("Redirecting %r to %r",s3_path, url)
     return redirect(url, code=int(HTTPStatus.TEMPORARY_REDIRECT))
 
 def headers(**kw):
@@ -249,3 +264,5 @@ def headers(**kw):
 
     result.update(kw)
     return result
+
+log.info("Module initialisation completed.")
