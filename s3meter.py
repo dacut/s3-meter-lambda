@@ -32,18 +32,6 @@ if ":" not in redis_endpoint:
 
 redis_host, redis_port = redis_endpoint.split(":")
 redis_port = int(redis_port)
-
-log.info("Checking Redis endpoint")
-# Attempt to connect to Redis
-try:
-    from socket import create_connection
-    s = create_connection((redis_host, redis_port), 1.0)
-    s.close()
-    del s
-except Exception as e:
-    log.error("Failed to connect to Redis", exc_info=True)
-    raise
-
 redis_pool = ConnectionPool(host=redis_host, port=redis_port)
 redis = StrictRedis(connection_pool=redis_pool)
 
