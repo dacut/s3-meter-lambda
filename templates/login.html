@@ -1,15 +1,11 @@
 {% extends "frame.html" %}
 {% block title %}S3 Meter Admin Login{% endblock %}
 {% block page_content %}
-<div class="container">
-  <div class="col-xs-6">
-    <h1>Login</h1>
-    <form class="form" action="{{ url_for('post_admin') }}" method="POST">
-      {{ xsrf() }}
-      {{ form_input("password", "Password", "", "", type="password") }}
-      <input type="hidden" name="action" value="login">
-      <button class="btn btn-submit" type="submit">Login</button>
-    </form>
-  </div>
-</div>
+<h1>Login</h1>
+<form class="form-horizontal" action="{{ url_for('post_admin') }}" method="POST">
+  {{ xsrf() }}
+  {{ form_input("password", "Password", "", "", type="password") }}
+  <input type="hidden" name="action" value="login">
+  {{ form_submit(label="Login") }}
+</form>
 {% endblock page_content %}

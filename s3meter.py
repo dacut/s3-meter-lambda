@@ -70,7 +70,7 @@ def get_allowed_buckets():
 @app.template_global()
 def get_xsrf_token():
     if "xsrf_token" not in session:
-        session["xsrf_token"] = str(b64encode(urandom(18)))
+        session["xsrf_token"] = b64encode(urandom(18)).decode("ascii")
 
     return session["xsrf_token"]
 
@@ -84,11 +84,11 @@ def get_root():
     return redirect(url_for("get_admin"))
 
 @app.route("/admin")
-def get_admin():
+def get_admin(code=HTTPStatus.OK):
     if "username" not in session:
-        return render_template("login.html")
+        return make_response((render_template("login.html"), code, headers()))
     else:
-        return render_template("admin.html")
+        return make_response((render_template("admin.html"), code, headers()))
 
 @app.route("/admin", methods=["POST"])
 def post_admin():
@@ -98,13 +98,14 @@ def post_admin():
 
     if not xsrf_ok():
         flash("Cross-site request forgery attempt detected.", category="error")
-        return make_response((render_template("admin.html"), HTTPStatus.UNAUTHORIZED, headers()))
+        return get_admin(code=HTTPStatus.UNAUTHORIZED)
 
     if action in ("add-bucket", "remove-bucket"):
         bucket_name = request.form.get("bucket-name", "").strip()
+        log.info("%s bucket_name=%r", action, bucket_name)
         if not bucket_name:
             flash("Bucket name cannot be empty.", category="error")
-            return make_response((render_template("admin.html", HTTPStatus.BAD_REQUEST, headers())))
+            return get_admin(code=HTTPStatus.BAD_REQUEST)
 
         if action == "add-bucket":
             redis.sadd("ALLOWED_BUCKETS", bucket_name)
@@ -114,7 +115,7 @@ def post_admin():
             flash("Bucket %s removed" % escape_html(bucket_name),
                   category="info")
 
-        return render_template("admin.html")
+        return get_admin()
     elif action == "login":
         credentials = environ.get("ADMIN_CREDENTIALS")
         if "username" in session:
@@ -122,7 +123,7 @@ def post_admin():
 
         if not credentials:
             flash("This site cannot be administered.", category="error")
-            return make_response((render_template("login.html"), HTTPStatus.FORBIDDEN, headers()))
+            return get_admin(code=HTTPStatus.FORBIDDEN)
 
         password = request.form.get("password", "")
         if pbkdf2_sha512.verify(password, credentials):
@@ -131,10 +132,10 @@ def post_admin():
 
         flash("Invalid password.", category="error")
         log.info("Invalid password submitted")
-        return make_response((render_template("login.html"), HTTPStatus.UNAUTHORIZED, headers()))
+        return get_admin(code=HTTPStatus.UNAUTHORIZED)
     else:
         flash("Unknown action requested", category="error")
-        return make_response((render_template("admin.html"), HTTPStatus.BAD_REQUEST, headers()))
+        return get_admin(code=HTTPStatus.BAD_REQUEST)
 
 @app.route("/admin/logout", methods=["GET", "POST"])
 def logout():
@@ -142,8 +143,60 @@ def logout():
     return redirect(url_for("get_admin"))
 
 @app.route("/admin/bucket/<bucket>", methods=["GET", "HEAD"])
-def get_bucket(bucket):
-    return render_template("bucket.html", bucket=bucket)
+def get_bucket(bucket, code=HTTPStatus.OK):
+    return make_response((
+        render_template("bucket.html", bucket=bucket,
+                        limits=s3m.get_limits_for_pool(bucket)),
+        code,
+        headers()))
+
+@app.route("/admin/bucket/<bucket>", methods=["POST"])
+def post_bucket(bucket, code=HTTPStatus.OK):
+    action = request.form.get("action")
+    if "username" not in session and action != "login":
+        return redirect(url_for("get_admin"), code=HTTPStatus.SEE_OTHER)
+
+    if not xsrf_ok():
+        flash("Cross-site request forgery attempt detected.", category="error")
+        return get_bucket(bucket, code=HTTPStatus.UNAUTHORIZED)
+
+    if action == "set-bucket-limits":
+        log.info("set-bucket-limits bucket_name=%r", bucket)
+
+        if not bucket:
+            flash("Empty bucket specified.", category="error")
+            return get_bucket(bucket, HTTPStatus.BAD_REQUEST)
+
+        errors = False
+        limits = {}
+
+        for period in ["hour", "day", "week", "month", "year"]:
+            period_limit = request.form.get(period + "-mb")
+
+            if not period_limit:
+                limits[period] = None
+            else:
+                try:
+                    period_limit = float(period_limit)
+                    if period_limit < 0:
+                        raise ValueError()
+
+                    limits[period] = int(period_limit * 1e6)
+                except ValueError:
+                    flash("Invalid value for %s limit: %r" %
+                          (period, escape_html(str(period_limit))),
+                          category="error")
+                    errors = True
+
+        if errors:
+            return get_bucket(bucket, HTTPStatus.BAD_REQUEST)
+
+        s3m.set_limits_for_pool(bucket, **limits)
+        return get_bucket(bucket)
+    else:
+        flash("Unknown action requested", category="error")
+        return get_bucket(bucket, code=HTTPStatus.BAD_REQUEST)
+
 
 @app.route("/<bucket>/<path:key>", methods=["GET", "HEAD"])
 def get_s3_object(bucket, key):

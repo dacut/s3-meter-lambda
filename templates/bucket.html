@@ -1,0 +1,160 @@
+{% extends "frame.html" %}
+{% block title %}{{ bucket|e }}{% endblock %}
+{% macro timeframe(period) %}
+{% set limit = limits.get(period) %}
+{% if limit is none %}
+{% set limit_mb = "" %}
+{% set limit_gb = "" %}
+{% set limit_tb = "" %}
+{% else %}
+{% set limit_mb = "%.3f" % (limit * 0.000001) %}
+{% set limit_gb = "%.6f" % (limit * 0.000000001) %}
+{% set limit_tb = "%.9f" % (limit * 0.000000000001) %}
+{% endif %}
+<div class="period-limit {{period}}">
+  <div class="row">
+    <label for="{{period}}-tb" id="label-{{period}}" class="form-label col-sm-2">Per {{period}}</label>
+    <div class="input-group col-sm-2" style="float: left;">
+      <input type="text" name="{{period}}-tb" id="input-{{period}}-tb" class="form-control limit-change tb" placeholder="1.000000000" value="{{ limit_tb }}">
+      <span class="input-group-addon">TB</span>
+    </div>
+    <div class="col-sm-1"></div>
+    <div class="input-group col-sm-2" style="float: left;">
+      <input type="text" name="{{period}}-gb" id="input-{{period}}-gb" class="form-control limit-change gb" placeholder="1024.000000" value="{{ limit_gb }}">
+      <span class="input-group-addon">GB</span>
+    </div>
+    <div class="col-sm-1"></div>
+    <div class="input-group col-sm-2" style="float: left;">
+      <input type="text" name="{{period}}-mb" id="input-{{period}}-mb" class="form-control limit-change mb" placeholder="1048576.000" value="{{ limit_mb }}">
+      <span class="input-group-addon">MB</span>
+    </div>
+  </div>
+  <div class="error-container row"></div>
+</div>
+{% endmacro %}
+{% block page_content %}
+<h1>Bucket {{ bucket|e }}</h1>
+<h2>Access limits</h2>
+<small>All values are base 10 -- e.g., 1 MB = 1000000 bytes</small>
+<p>
+<!-- The weird "search" name prevents LastPass from attempting to fill out this form. -->
+<form class="form-horizontal" action="{{ url_for("post_bucket", bucket=bucket) }}" method="POST" autocomplete="off" id="search">
+  {{ xsrf() }}
+  <input type="hidden" name="action" value="set-bucket-limits">
+  {{ timeframe("year") }}
+  {{ timeframe("month") }}
+  {{ timeframe("week") }}
+  {{ timeframe("day") }}
+  {{ timeframe("hour") }}
+  <button class="btn btn-primary">Change limits</button>
+</form>
+</p>
+{% endblock page_content %}
+{% block footer -%}
+{{- super() -}}
+<script language="javascript"><!--
+function check_nonsensical_limits () {
+    "use strict";
+    var hourLimit, dayLimit, weekLimit, monthLimit, yearLimit;
+
+    hourLimit = Number.parseFloat($("#input-hour-mb").val());
+    dayLimit = Number.parseFloat($("#input-day-mb").val());
+    weekLimit = Number.parseFloat($("#input-week-mb").val());
+    monthLimit = Number.parseFloat($("#input-month-mb").val());
+    yearLimit = Number.parseFloat($("#input-year-mb").val());
+
+    console.log("check_nonsensical_limits: hourLimit=" + hourLimit + ", dayLimit=" + dayLimit + ", weekLimit=" + weekLimit +
+                ", monthLimit=" + monthLimit + ", yearLimit=" + yearLimit);
+
+    if (! Number.isNaN(hourLimit) && hourLimit > 0 &&
+        ! Number.isNaN(dayLimit) && dayLimit > 0 &&
+        hourLimit * 24 < dayLimit)
+    {
+        $(".period-limit.day").find(".error-container").html(
+            '<div class="alert alert-info alert-dismissable" role="alert">' +
+            '<button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">&times;</span></button>' +
+            'Hourly limit prevents daily limit from ever being reached.</div>'
+        );
+    }
+
+    if (! Number.isNaN(dayLimit) && dayLimit > 0 &&
+        ! Number.isNaN(weekLimit) && weekLimit > 0 &&
+        dayLimit * 7 < weekLimit)
+    {
+        $(".period-limit.week").find(".error-container").html(
+            '<div class="alert alert-info alert-dismissable" role="alert">' +
+            '<button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">&times;</span></button>' +
+            'Daily limit prevents weekly limit from ever being reached.</div>'
+        );
+    }
+
+    if (! Number.isNaN(dayLimit) && dayLimit > 0 &&
+        ! Number.isNaN(monthLimit) && monthLimit > 0 &&
+        dayLimit * 31 < monthLimit)
+    {
+        $(".period-limit.month").find(".error-container").html(
+            '<div class="alert alert-info alert-dismissable" role="alert">' +
+            '<button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">&times;</span></button>' +
+            'Daily limit prevents monthly limit from ever being reached.</div>'
+        );
+    }
+
+    if (! Number.isNaN(monthLimit) && monthLimit > 0 &&
+        ! Number.isNaN(yearLimit) && yearLimit > 0 &&
+        monthLimit * 12 < yearLimit)
+    {
+        $(".period-limit.year").find(".error-container").html(
+            '<div class="alert alert-info alert-dismissable" role="alert">' +
+            '<button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">&times;</span></button>' +
+            'Monthly limit prevents yearly limit from ever being reached.</div>'
+        );
+    } else if (! Number.isNaN(dayLimit) && dayLimit > 0 &&
+               ! Number.isNaN(yearLimit) && yearLimit > 0 &&
+               dayLimit * 366 < yearLimit)
+    {
+        $(".period-limit.year").find(".error-container").html(
+            '<div class="alert alert-info alert-dismissable" role="alert">' +
+            '<button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">&times;</span></button>' +
+            'Daily limit prevents yearly limit from ever being reached.</div>'
+        );
+    }
+
+    return;
+}
+
+$(".limit-change").change(function () {
+    "use strict";
+    var curLimit;
+    var periodLimit = $(this).closest(".period-limit");
+
+    curLimit = $(this).val();
+    if (curLimit === "") {
+        periodLimit.find(".limit-change").val("");
+    } else {
+        curLimit = Number.parseFloat(curLimit);
+
+        if (Number.isNaN(curLimit) || curLimit <= 0.0) {
+            $(this).addClass("has-error");
+            periodLimit.find(".error-container").html(
+              '<div class="alert alert-danger alert-dismissable" role="alert">' +
+              '<button type="button" class="close" data-dismiss="alert" aria-label="Close"><span aria-hidden="true">&times;</span></button>' +
+              'Invalid limit value specified.</div>');
+        } else {
+            if ($(this).hasClass("tb")) {
+                curLimit *= 1e6;
+            } else if ($(this).hasClass("gb")) {
+                curLimit *= 1e3;
+            }
+
+            periodLimit.find(".tb").val((curLimit * 1e-6).toFixed(9).toString());
+            periodLimit.find(".gb").val((curLimit * 1e-3).toFixed(6).toString());
+            periodLimit.find(".mb").val(curLimit.toFixed(3).toString());
+            periodLimit.find(".limit-change").removeClass("has-error");
+            periodLimit.find(".error-container").html("");
+        }
+    }
+
+    check_nonsensical_limits();
+});
+--></script>
+{%- endblock footer %}
